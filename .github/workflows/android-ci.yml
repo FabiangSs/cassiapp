@@ -1,53 +1,212 @@
-name: Android CI
+name: android ci
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+
+    runs-on: ubuntu-24.04
 
     steps:
-    - name: Checkout source code
-      uses: actions/checkout@v4
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '17'
-        cache: gradle
+      # ============================================================
+      # 1. CassiApp
+      # ============================================================
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+      - name: Checkout CassiApp
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - name: Prepare configuration file
-      run: |
-        BUILD_DIR="${{ github.workspace }}/app"
-        cp app/cassiaext.example.cfg app/cassiaext.cfg
-        sed -i "s|<ABSOLUTE PATH TO CASSIAEXT BUILD DIRECTORY>|$BUILD_DIR|g" app/cassiaext.cfg
-        sed -i '/^<OPTIONAL/d' app/cassiaext.cfg
-        sed -i '/^Rename this/d' app/cassiaext.cfg
-        sed -i '/^Remove the comments/d' app/cassiaext.cfg
-        echo "--- Contenido final de cassiaext.cfg ---"
-        cat app/cassiaext.cfg
+      # ============================================================
+      # 2. Java 19
+      # ============================================================
 
-    - name: Generate Ninja build files with CMake
-      run: |
-        cd app
-        mkdir -p build_native
-        cd build_native
-        cmake -G Ninja ../src/main/cpp
+      - name: Setup Java 19
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '19'
+          cache: gradle
 
-    - name: Build Debug APK
-      run: ./gradlew assembleDebug
+      # ============================================================
+      # 3. Android SDK
+      # ============================================================
 
-    - name: Upload APK Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: app-debug-apk
-        path: app/build/outputs/apk/debug/*.apk
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;26.1.10909125" \
+            "cmake;3.22.1"
+
+          yes | sdkmanager --licenses || true
+
+      # ============================================================
+      # 4. Ninja + build dependencies
+      # ============================================================
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            ninja-build \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            meson \
+            jq \
+            gettext \
+            autopoint \
+            python3 \
+            python3-pip \
+            python3-setuptools \
+            python3-wheel
+
+      # ============================================================
+      # 5. Environment
+      # ============================================================
+
+      - name: Configure Android environment
+        run: |
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
+
+          echo "$ANDROID_HOME/cmake/3.22.1/bin" >> "$GITHUB_PATH"
+
+      # ============================================================
+      # 6. Clone CassiaExt
+      # ============================================================
+
+      - name: Clone CassiaExt
+        run: |
+          git clone --depth 1 \
+            https://github.com/cassia-org/cassiaext.git \
+            "$GITHUB_WORKSPACE/cassiaext"
+
+      # ============================================================
+      # 7. Prepare CassiaExt
+      # ============================================================
+
+      - name: Apply CassiaExt patches
+        working-directory: cassiaext
+        run: |
+          chmod +x deps/apply-patches.sh
+          ./deps/apply-patches.sh
+
+      # ============================================================
+      # 8. Configure CassiaExt
+      # ============================================================
+
+      - name: Configure CassiaExt
+        working-directory: cassiaext
+        run: |
+          cmake \
+            -GNinja \
+            -Bbuild \
+            -H. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-29 \
+            -DANDROID_SDK="$ANDROID_SDK_ROOT" \
+            -DANDROID_NDK="$ANDROID_NDK_HOME"
+
+      # ============================================================
+      # 9. Build CassiaExt
+      # ============================================================
+
+      - name: Build CassiaExt
+        working-directory: cassiaext
+        run: |
+          cmake --build build --parallel 2
+
+      # ============================================================
+      # 10. Locate prefix.tar.gz
+      # ============================================================
+
+      - name: Locate CassiaExt prefix
+        run: |
+          echo "Searching for prefix.tar.gz..."
+
+          find "$GITHUB_WORKSPACE/cassiaext" \
+            -name "prefix.tar.gz" \
+            -type f \
+            -print
+
+      # ============================================================
+      # 11. Create cassiaext.cfg
+      # ============================================================
+
+      - name: Create cassiaext.cfg
+        run: |
+          PREFIX_FILE=$(find "$GITHUB_WORKSPACE/cassiaext" \
+            -name "prefix.tar.gz" \
+            -type f \
+            -print -quit)
+
+          if [ -z "$PREFIX_FILE" ]; then
+            echo "ERROR: prefix.tar.gz was not generated"
+            exit 1
+          fi
+
+          CASSIAEXT_DIR=$(dirname "$PREFIX_FILE")
+
+          echo "CassiaExt build directory:"
+          echo "$CASSIAEXT_DIR"
+
+          printf '%s\n' "$CASSIAEXT_DIR" > cassiaext.cfg
+          printf '\n' >> cassiaext.cfg
+
+          echo "Generated cassiaext.cfg:"
+          cat cassiaext.cfg
+
+      # ============================================================
+      # 12. Build CassiApp
+      # ============================================================
+
+      - name: Grant Gradle permission
+        run: chmod +x gradlew
+
+      - name: Build Debug APK
+        run: |
+          ./gradlew \
+            assembleDebug \
+            --stacktrace \
+            --no-daemon \
+            --info
+
+      # ============================================================
+      # 13. Find APK
+      # ============================================================
+
+      - name: Locate APK
+        run: |
+          find . \
+            -path "*/build/outputs/apk/*.apk" \
+            -type f \
+            -print
+
+      # ============================================================
+      # 14. Upload APK
+      # ============================================================
+
+      - name: Upload Cassia APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cassia-arm64-debug
+          path: |
+            app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
