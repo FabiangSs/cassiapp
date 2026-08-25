@@ -20,7 +20,7 @@ jobs:
       - name: Checkout CassiApp
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
           fetch-depth: 1
 
       # ============================================================
@@ -88,30 +88,43 @@ jobs:
           echo "$ANDROID_HOME/cmake/3.22.1/bin" >> "$GITHUB_PATH"
 
       # ============================================================
-      # 6. CLONE CASSIAEXT + ALL SUBMODULES
+      # 6. CLONE CASSIAEXT
       # ============================================================
 
       - name: Clone CassiaExt
         run: |
           git clone \
             --depth 1 \
-            --recurse-submodules \
-            --shallow-submodules \
             https://github.com/cassia-org/cassiaext.git \
             "$GITHUB_WORKSPACE/cassiaext"
 
       # ============================================================
-      # 7. INITIALIZE CASSIAEXT SUBMODULES
+      # 7. CONFIGURE GIT TO USE HTTPS INSTEAD OF SSH
+      # ============================================================
+
+      - name: Configure GitHub HTTPS
+        working-directory: cassiaext
+        run: |
+          echo "Converting GitHub SSH URLs to HTTPS..."
+
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://github.com/".insteadOf "git://github.com/"
+
+          git submodule sync --recursive
+
+          echo ""
+          echo "Configured Git URL rewrite rules:"
+          git config --global --get-regexp '^url\..*\.insteadOf$' || true
+
+      # ============================================================
+      # 8. INITIALIZE CASSIAEXT SUBMODULES
       # ============================================================
 
       - name: Initialize CassiaExt submodules
         working-directory: cassiaext
         run: |
-          echo "Synchronizing submodules..."
-
-          git submodule sync --recursive
-
-          echo "Initializing submodules..."
+          echo "Initializing CassiaExt submodules..."
 
           git submodule update \
             --init \
@@ -126,15 +139,17 @@ jobs:
           git submodule status --recursive
 
       # ============================================================
-      # 8. VERIFY CASSIAEXT DEPENDENCIES
+      # 9. VERIFY IMPORTANT DEPENDENCIES
       # ============================================================
 
       - name: Verify CassiaExt dependencies
         working-directory: cassiaext
         run: |
           echo "=========================================="
-          echo "CASSIAEXT DEPENDENCIES"
+          echo "VERIFYING DEPENDENCIES"
           echo "=========================================="
+
+          FAILED=0
 
           for dir in \
             deps/libandroid-shmem \
@@ -167,11 +182,18 @@ jobs:
               echo "[OK] $dir"
             else
               echo "[MISSING OR EMPTY] $dir"
+              FAILED=1
             fi
           done
 
+          if [ "$FAILED" -ne 0 ]; then
+            echo ""
+            echo "ERROR: One or more CassiaExt dependencies are missing."
+            exit 1
+          fi
+
       # ============================================================
-      # 9. FIND PATCH SCRIPT
+      # 10. FIND AND APPLY PATCHES
       # ============================================================
 
       - name: Find and apply CassiaExt patches
@@ -189,7 +211,7 @@ jobs:
 
           if [ -z "$PATCH_SCRIPT" ]; then
             echo "No patch script found."
-            echo "Continuing..."
+            echo "Continuing without patch script."
           else
             echo "Found patch script:"
             echo "$PATCH_SCRIPT"
@@ -200,10 +222,10 @@ jobs:
           fi
 
       # ============================================================
-      # 10. VERIFY CASSIAEXT SOURCE TREE
+      # 11. VERIFY CASSIAEXT
       # ============================================================
 
-      - name: Verify CassiaExt source tree
+      - name: Verify CassiaExt tree
         working-directory: cassiaext
         run: |
           echo "=========================================="
@@ -217,10 +239,10 @@ jobs:
           echo "DEPS"
           echo "=========================================="
 
-          ls -la deps || true
+          ls -la deps
 
       # ============================================================
-      # 11. CONFIGURE CASSIAEXT
+      # 12. CONFIGURE CASSIAEXT
       # ============================================================
 
       - name: Configure CassiaExt
@@ -240,7 +262,7 @@ jobs:
             -DANDROID_NDK="$ANDROID_NDK_HOME"
 
       # ============================================================
-      # 12. BUILD CASSIAEXT
+      # 13. BUILD CASSIAEXT
       # ============================================================
 
       - name: Build CassiaExt
@@ -251,7 +273,7 @@ jobs:
             --parallel 2
 
       # ============================================================
-      # 13. LOCATE PREFIX.TAR.GZ
+      # 14. LOCATE PREFIX.TAR.GZ
       # ============================================================
 
       - name: Locate CassiaExt prefix
@@ -264,7 +286,7 @@ jobs:
             -print
 
       # ============================================================
-      # 14. CREATE CASSIAEXT.CFG
+      # 15. CREATE CASSIAEXT.CFG
       # ============================================================
 
       - name: Create cassiaext.cfg
@@ -279,9 +301,9 @@ jobs:
             echo "ERROR: prefix.tar.gz was not generated."
 
             echo ""
-            echo "CassiaExt build tree:"
+            echo "Searching build tree:"
             find "$GITHUB_WORKSPACE/cassiaext/build" \
-              -maxdepth 4 \
+              -maxdepth 5 \
               -type f \
               | sort \
               | head -300
@@ -308,7 +330,7 @@ jobs:
           cat cassiaext.cfg
 
       # ============================================================
-      # 15. GRADLE PERMISSION
+      # 16. GRADLE PERMISSION
       # ============================================================
 
       - name: Grant Gradle permission
@@ -316,7 +338,7 @@ jobs:
           chmod +x gradlew
 
       # ============================================================
-      # 16. BUILD CASSIA DEBUG APK
+      # 17. BUILD CASSIA DEBUG APK
       # ============================================================
 
       - name: Build Debug APK
@@ -328,7 +350,7 @@ jobs:
             --info
 
       # ============================================================
-      # 17. LOCATE APK
+      # 18. LOCATE APK
       # ============================================================
 
       - name: Locate APK
@@ -343,7 +365,7 @@ jobs:
             -print
 
       # ============================================================
-      # 18. UPLOAD APK
+      # 19. UPLOAD APK
       # ============================================================
 
       - name: Upload Cassia APK
