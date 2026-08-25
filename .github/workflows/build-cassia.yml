@@ -21,6 +21,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 1
 
       # ============================================================
       # 2. JAVA 19
@@ -87,20 +88,122 @@ jobs:
           echo "$ANDROID_HOME/cmake/3.22.1/bin" >> "$GITHUB_PATH"
 
       # ============================================================
-      # 6. CLONE CASSIAEXT
+      # 6. CLONE CASSIAEXT + ALL SUBMODULES
       # ============================================================
 
       - name: Clone CassiaExt
         run: |
-          git clone --depth 1 \
+          git clone \
+            --depth 1 \
+            --recurse-submodules \
+            --shallow-submodules \
             https://github.com/cassia-org/cassiaext.git \
             "$GITHUB_WORKSPACE/cassiaext"
 
       # ============================================================
-      # 7. INSPECT CASSIAEXT
+      # 7. INITIALIZE CASSIAEXT SUBMODULES
       # ============================================================
 
-      - name: Inspect CassiaExt
+      - name: Initialize CassiaExt submodules
+        working-directory: cassiaext
+        run: |
+          echo "Synchronizing submodules..."
+
+          git submodule sync --recursive
+
+          echo "Initializing submodules..."
+
+          git submodule update \
+            --init \
+            --recursive \
+            --depth 1
+
+          echo ""
+          echo "=========================================="
+          echo "SUBMODULE STATUS"
+          echo "=========================================="
+
+          git submodule status --recursive
+
+      # ============================================================
+      # 8. VERIFY CASSIAEXT DEPENDENCIES
+      # ============================================================
+
+      - name: Verify CassiaExt dependencies
+        working-directory: cassiaext
+        run: |
+          echo "=========================================="
+          echo "CASSIAEXT DEPENDENCIES"
+          echo "=========================================="
+
+          for dir in \
+            deps/libandroid-shmem \
+            deps/xcbproto \
+            deps/xorgproto \
+            deps/libxau \
+            deps/libxcb \
+            deps/libx11 \
+            deps/libffi \
+            deps/libexpat \
+            deps/wayland \
+            deps/wayland-protocols \
+            deps/libxfixes \
+            deps/libxdamage \
+            deps/libxcomposite \
+            deps/libxrender \
+            deps/libxcursor \
+            deps/libxext \
+            deps/libxxf86vm \
+            deps/libxi \
+            deps/libxtst \
+            deps/libxres \
+            deps/libxtrans \
+            deps/libice \
+            deps/libsm \
+            deps/libxt \
+            deps/libxmu
+          do
+            if [ -d "$dir" ] && [ "$(find "$dir" -mindepth 1 -maxdepth 1 | head -1)" ]; then
+              echo "[OK] $dir"
+            else
+              echo "[MISSING OR EMPTY] $dir"
+            fi
+          done
+
+      # ============================================================
+      # 9. FIND PATCH SCRIPT
+      # ============================================================
+
+      - name: Find and apply CassiaExt patches
+        working-directory: cassiaext
+        run: |
+          PATCH_SCRIPT=$(find . \
+            -type f \
+            \( \
+              -name "apply-patches.sh" \
+              -o \
+              -name "apply_patches.sh" \
+            \) \
+            -print \
+            -quit)
+
+          if [ -z "$PATCH_SCRIPT" ]; then
+            echo "No patch script found."
+            echo "Continuing..."
+          else
+            echo "Found patch script:"
+            echo "$PATCH_SCRIPT"
+
+            chmod +x "$PATCH_SCRIPT"
+
+            "$PATCH_SCRIPT"
+          fi
+
+      # ============================================================
+      # 10. VERIFY CASSIAEXT SOURCE TREE
+      # ============================================================
+
+      - name: Verify CassiaExt source tree
         working-directory: cassiaext
         run: |
           echo "=========================================="
@@ -111,59 +214,20 @@ jobs:
 
           echo ""
           echo "=========================================="
-          echo "FILES"
+          echo "DEPS"
           echo "=========================================="
 
-          find . -maxdepth 3 -type f | sort
-
-          echo ""
-          echo "=========================================="
-          echo "DIRECTORIES"
-          echo "=========================================="
-
-          find . -maxdepth 2 -type d | sort
-
-          echo ""
-          echo "=========================================="
-          echo "SHELL SCRIPTS"
-          echo "=========================================="
-
-          find . -type f -name "*.sh" -print
+          ls -la deps || true
 
       # ============================================================
-      # 8. FIND PATCH SCRIPT
-      # ============================================================
-
-      - name: Find CassiaExt patch script
-        working-directory: cassiaext
-        run: |
-          PATCH_SCRIPT=$(find . -type f \
-            \( -name "apply-patches.sh" -o -name "apply_patches.sh" \) \
-            -print -quit)
-
-          if [ -z "$PATCH_SCRIPT" ]; then
-            echo "WARNING: apply-patches.sh was not found."
-            echo "Continuing without patch script."
-          else
-            echo "Found patch script:"
-            echo "$PATCH_SCRIPT"
-
-            chmod +x "$PATCH_SCRIPT"
-            "$PATCH_SCRIPT"
-          fi
-
-      # ============================================================
-      # 9. BUILD CASSIAEXT
-      # ============================================================
-      #
-      # This step will be adjusted after seeing the real
-      # CassiaExt structure from the inspection above.
-      #
+      # 11. CONFIGURE CASSIAEXT
       # ============================================================
 
       - name: Configure CassiaExt
         working-directory: cassiaext
         run: |
+          rm -rf build
+
           cmake \
             -GNinja \
             -Bbuild \
@@ -175,13 +239,19 @@ jobs:
             -DANDROID_SDK="$ANDROID_SDK_ROOT" \
             -DANDROID_NDK="$ANDROID_NDK_HOME"
 
+      # ============================================================
+      # 12. BUILD CASSIAEXT
+      # ============================================================
+
       - name: Build CassiaExt
         working-directory: cassiaext
         run: |
-          cmake --build build --parallel 2
+          cmake \
+            --build build \
+            --parallel 2
 
       # ============================================================
-      # 10. LOCATE PREFIX.TAR.GZ
+      # 13. LOCATE PREFIX.TAR.GZ
       # ============================================================
 
       - name: Locate CassiaExt prefix
@@ -194,7 +264,7 @@ jobs:
             -print
 
       # ============================================================
-      # 11. CREATE CASSIAEXT.CFG
+      # 14. CREATE CASSIAEXT.CFG
       # ============================================================
 
       - name: Create cassiaext.cfg
@@ -202,27 +272,43 @@ jobs:
           PREFIX_FILE=$(find "$GITHUB_WORKSPACE/cassiaext" \
             -name "prefix.tar.gz" \
             -type f \
-            -print -quit)
+            -print \
+            -quit)
 
           if [ -z "$PREFIX_FILE" ]; then
             echo "ERROR: prefix.tar.gz was not generated."
+
+            echo ""
+            echo "CassiaExt build tree:"
+            find "$GITHUB_WORKSPACE/cassiaext/build" \
+              -maxdepth 4 \
+              -type f \
+              | sort \
+              | head -300
+
             exit 1
           fi
 
           CASSIAEXT_DIR=$(dirname "$PREFIX_FILE")
 
-          echo "CassiaExt build directory:"
+          echo "=========================================="
+          echo "CASSIAEXT BUILD DIRECTORY"
+          echo "=========================================="
+
           echo "$CASSIAEXT_DIR"
 
           printf '%s\n' "$CASSIAEXT_DIR" > cassiaext.cfg
           printf '\n' >> cassiaext.cfg
 
           echo ""
-          echo "Generated cassiaext.cfg:"
+          echo "=========================================="
+          echo "GENERATED cassiaext.cfg"
+          echo "=========================================="
+
           cat cassiaext.cfg
 
       # ============================================================
-      # 12. GRADLE PERMISSION
+      # 15. GRADLE PERMISSION
       # ============================================================
 
       - name: Grant Gradle permission
@@ -230,7 +316,7 @@ jobs:
           chmod +x gradlew
 
       # ============================================================
-      # 13. BUILD CASSIA DEBUG APK
+      # 16. BUILD CASSIA DEBUG APK
       # ============================================================
 
       - name: Build Debug APK
@@ -242,12 +328,14 @@ jobs:
             --info
 
       # ============================================================
-      # 14. LOCATE APK
+      # 17. LOCATE APK
       # ============================================================
 
       - name: Locate APK
         run: |
-          echo "Generated APK files:"
+          echo "=========================================="
+          echo "GENERATED APK"
+          echo "=========================================="
 
           find . \
             -path "*/build/outputs/apk/*.apk" \
@@ -255,7 +343,7 @@ jobs:
             -print
 
       # ============================================================
-      # 15. UPLOAD APK
+      # 18. UPLOAD APK
       # ============================================================
 
       - name: Upload Cassia APK
