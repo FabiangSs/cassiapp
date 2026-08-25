@@ -25,16 +25,24 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
-    -    - name: Prepare configuration file
+    - name: Prepare configuration file
       run: |
-        if [ -f "app/cassiaext.example.cfg" ]; then
-          cp app/cassiaext.example.cfg app/cassiaext.cfg
-          echo "Configuration file copied successfully."
-        else
-          echo "Example config not found!"
-          exit 1
-        fi
-
+        # Definimos la ruta absoluta del directorio app en el servidor
+        BUILD_DIR="${{ github.workspace }}/app"
+        
+        # Copiamos el archivo de ejemplo a su nombre definitivo
+        cp app/cassiaext.example.cfg app/cassiaext.cfg
+        
+        # Reemplazamos el marcador por la ruta real
+        sed -i "s|<ABSOLUTE PATH TO CASSIAEXT BUILD DIRECTORY>|$BUILD_DIR|g" app/cassiaext.cfg
+        
+        # Eliminamos las líneas de instrucciones y comentarios del archivo de texto
+        sed -i '/^<OPTIONAL/d' app/cassiaext.cfg
+        sed -i '/^Rename this/d' app/cassiaext.cfg
+        sed -i '/^Remove the comments/d' app/cassiaext.cfg
+        
+        echo "--- Contenido final de cassiaext.cfg ---"
+        cat app/cassiaext.cfg
 
     - name: Build Debug APK
       run: ./gradlew assembleDebug
