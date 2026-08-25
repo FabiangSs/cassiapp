@@ -14,7 +14,7 @@ jobs:
     steps:
 
       # ============================================================
-      # 1. CassiApp
+      # 1. CHECKOUT CASSIAPP
       # ============================================================
 
       - name: Checkout CassiApp
@@ -23,7 +23,7 @@ jobs:
           submodules: recursive
 
       # ============================================================
-      # 2. Java 19
+      # 2. JAVA 19
       # ============================================================
 
       - name: Setup Java 19
@@ -34,7 +34,7 @@ jobs:
           cache: gradle
 
       # ============================================================
-      # 3. Android SDK
+      # 3. ANDROID SDK
       # ============================================================
 
       - name: Setup Android SDK
@@ -52,7 +52,7 @@ jobs:
           yes | sdkmanager --licenses || true
 
       # ============================================================
-      # 4. Ninja + build dependencies
+      # 4. BUILD DEPENDENCIES
       # ============================================================
 
       - name: Install build dependencies
@@ -75,7 +75,7 @@ jobs:
             python3-wheel
 
       # ============================================================
-      # 5. Environment
+      # 5. ANDROID ENVIRONMENT
       # ============================================================
 
       - name: Configure Android environment
@@ -87,7 +87,7 @@ jobs:
           echo "$ANDROID_HOME/cmake/3.22.1/bin" >> "$GITHUB_PATH"
 
       # ============================================================
-      # 6. Clone CassiaExt
+      # 6. CLONE CASSIAEXT
       # ============================================================
 
       - name: Clone CassiaExt
@@ -97,17 +97,68 @@ jobs:
             "$GITHUB_WORKSPACE/cassiaext"
 
       # ============================================================
-      # 7. Prepare CassiaExt
+      # 7. INSPECT CASSIAEXT
       # ============================================================
 
-      - name: Apply CassiaExt patches
+      - name: Inspect CassiaExt
         working-directory: cassiaext
         run: |
-          chmod +x deps/apply-patches.sh
-          ./deps/apply-patches.sh
+          echo "=========================================="
+          echo "CASSIAEXT ROOT"
+          echo "=========================================="
+
+          ls -la
+
+          echo ""
+          echo "=========================================="
+          echo "FILES"
+          echo "=========================================="
+
+          find . -maxdepth 3 -type f | sort
+
+          echo ""
+          echo "=========================================="
+          echo "DIRECTORIES"
+          echo "=========================================="
+
+          find . -maxdepth 2 -type d | sort
+
+          echo ""
+          echo "=========================================="
+          echo "SHELL SCRIPTS"
+          echo "=========================================="
+
+          find . -type f -name "*.sh" -print
 
       # ============================================================
-      # 8. Configure CassiaExt
+      # 8. FIND PATCH SCRIPT
+      # ============================================================
+
+      - name: Find CassiaExt patch script
+        working-directory: cassiaext
+        run: |
+          PATCH_SCRIPT=$(find . -type f \
+            \( -name "apply-patches.sh" -o -name "apply_patches.sh" \) \
+            -print -quit)
+
+          if [ -z "$PATCH_SCRIPT" ]; then
+            echo "WARNING: apply-patches.sh was not found."
+            echo "Continuing without patch script."
+          else
+            echo "Found patch script:"
+            echo "$PATCH_SCRIPT"
+
+            chmod +x "$PATCH_SCRIPT"
+            "$PATCH_SCRIPT"
+          fi
+
+      # ============================================================
+      # 9. BUILD CASSIAEXT
+      # ============================================================
+      #
+      # This step will be adjusted after seeing the real
+      # CassiaExt structure from the inspection above.
+      #
       # ============================================================
 
       - name: Configure CassiaExt
@@ -124,17 +175,13 @@ jobs:
             -DANDROID_SDK="$ANDROID_SDK_ROOT" \
             -DANDROID_NDK="$ANDROID_NDK_HOME"
 
-      # ============================================================
-      # 9. Build CassiaExt
-      # ============================================================
-
       - name: Build CassiaExt
         working-directory: cassiaext
         run: |
           cmake --build build --parallel 2
 
       # ============================================================
-      # 10. Locate prefix.tar.gz
+      # 10. LOCATE PREFIX.TAR.GZ
       # ============================================================
 
       - name: Locate CassiaExt prefix
@@ -147,7 +194,7 @@ jobs:
             -print
 
       # ============================================================
-      # 11. Create cassiaext.cfg
+      # 11. CREATE CASSIAEXT.CFG
       # ============================================================
 
       - name: Create cassiaext.cfg
@@ -158,7 +205,7 @@ jobs:
             -print -quit)
 
           if [ -z "$PREFIX_FILE" ]; then
-            echo "ERROR: prefix.tar.gz was not generated"
+            echo "ERROR: prefix.tar.gz was not generated."
             exit 1
           fi
 
@@ -170,15 +217,21 @@ jobs:
           printf '%s\n' "$CASSIAEXT_DIR" > cassiaext.cfg
           printf '\n' >> cassiaext.cfg
 
+          echo ""
           echo "Generated cassiaext.cfg:"
           cat cassiaext.cfg
 
       # ============================================================
-      # 12. Build CassiApp
+      # 12. GRADLE PERMISSION
       # ============================================================
 
       - name: Grant Gradle permission
-        run: chmod +x gradlew
+        run: |
+          chmod +x gradlew
+
+      # ============================================================
+      # 13. BUILD CASSIA DEBUG APK
+      # ============================================================
 
       - name: Build Debug APK
         run: |
@@ -189,18 +242,20 @@ jobs:
             --info
 
       # ============================================================
-      # 13. Find APK
+      # 14. LOCATE APK
       # ============================================================
 
       - name: Locate APK
         run: |
+          echo "Generated APK files:"
+
           find . \
             -path "*/build/outputs/apk/*.apk" \
             -type f \
             -print
 
       # ============================================================
-      # 14. Upload APK
+      # 15. UPLOAD APK
       # ============================================================
 
       - name: Upload Cassia APK
