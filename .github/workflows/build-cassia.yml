@@ -39,7 +39,7 @@ jobs:
           java-version: "19"
 
       # ============================================================
-      # 3. ANDROID SDK / NDK / CMAKE / NINJA
+      # 3. ANDROID SDK
       # ============================================================
 
       - name: Setup Android SDK
@@ -86,19 +86,14 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
 
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}"
+
       # ============================================================
-      # 6. CONVERTIR SUBMODULES SSH -> HTTPS
-      #
-      # Esto es CRÍTICO.
-      # CassiaExt contiene:
-      #
-      # gamescope -> git@github.com:ValveSoftware/gamescope.git
-      # xserver   -> git@github.com:cassia-org/xserver.git
-      #
-      # Actions no tiene SSH keys para ellos.
+      # 6. CONVERTIR GIT SSH -> HTTPS
       # ============================================================
 
-      - name: Convert Git submodules from SSH to HTTPS
+      - name: Configure Git HTTPS for submodules
         run: |
           git config --global url."https://github.com/".insteadOf "git@github.com:"
           git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
@@ -106,146 +101,199 @@ jobs:
 
           git config --global protocol.version 2
 
-          echo "Git URL rewrite configuration:"
+          echo "Git URL rewrite rules:"
           git config --global --get-regexp '^url\..*\.insteadOf$' || true
 
       # ============================================================
-      # 7. INICIALIZAR SUBMÓDULOS
+      # 7. INICIALIZAR SUBMÓDULOS PRINCIPALES
       # ============================================================
 
       - name: Initialize Cassia submodules
         run: |
           git submodule sync --recursive
 
-          git submodule update --init --recursive --jobs 4
+          git submodule update \
+            --init \
+            --recursive \
+            --jobs 4
 
       # ============================================================
-      # 8. FORZAR HTTPS EN LOS .gitmodules DE CASSIAEXT
-      #
-      # Algunas referencias pueden seguir apareciendo como SSH.
+      # 8. CORREGIR URLS DE SUBMÓDULOS DE CASSIAEXT
       # ============================================================
 
-      - name: Fix CassiaExt submodule URLs
+      - name: Configure CassiaExt submodules
         run: |
-          if [ -d "cassiaext" ]; then
+          if [ ! -d "cassiaext" ]; then
+            echo "ERROR: cassiaext directory does not exist."
+            echo
+            echo "Repository structure:"
+            find . -maxdepth 3 -type d | sort
+            exit 1
+          fi
+
+          echo "CassiaExt found:"
+          pwd
+          ls -la cassiaext
+
+          if [ -f "cassiaext/.gitmodules" ]; then
+            echo
+            echo "CassiaExt .gitmodules:"
+            cat cassiaext/.gitmodules
+
             cd cassiaext
 
-            git config -f .gitmodules url."https://github.com/".insteadOf "git@github.com:"
-            git config -f .gitmodules url."https://github.com/".insteadOf "ssh://git@github.com/"
-
             git submodule sync --recursive
+
+            cd ..
+          else
+            echo "WARNING: cassiaext/.gitmodules was not found."
           fi
 
       # ============================================================
-      # 9. REINTENTAR SUBMÓDULOS DE CASSIAEXT
+      # 9. INICIALIZAR SUBMÓDULOS DE CASSIAEXT
       # ============================================================
 
       - name: Initialize CassiaExt submodules
         run: |
-          if [ -d "cassiaext" ]; then
-            git -C cassiaext submodule sync --recursive
-
-            git -C cassiaext submodule update \
-              --init \
-              --recursive \
-              --jobs 4
+          if [ ! -d "cassiaext" ]; then
+            echo "ERROR: cassiaext directory does not exist."
+            exit 1
           fi
 
+          git -C cassiaext submodule sync --recursive
+
+          git -C cassiaext submodule update \
+            --init \
+            --recursive \
+            --jobs 4
+
       # ============================================================
-      # 10. VERIFICAR ESTRUCTURA
+      # 10. VERIFICAR ESTRUCTURA DE CASSIAEXT
       # ============================================================
 
-      - name: Verify CassiaExt dependencies
+      - name: Verify CassiaExt structure
         run: |
-          echo "========================================"
-          echo "CassiaExt directory"
-          echo "========================================"
+          echo "============================================================"
+          echo "CURRENT DIRECTORY"
+          echo "============================================================"
 
-          ls -la cassiaext || true
+          pwd
 
           echo
-          echo "========================================"
-          echo "CassiaExt dependencies"
-          echo "========================================"
+          echo "============================================================"
+          echo "ROOT DIRECTORY"
+          echo "============================================================"
 
-          find cassiaext/deps \
-            -maxdepth 1 \
-            -mindepth 1 \
-            -type d \
+          ls -la
+
+          echo
+          echo "============================================================"
+          echo "CASSIAEXT DIRECTORY"
+          echo "============================================================"
+
+          if [ ! -d "cassiaext" ]; then
+            echo "ERROR: cassiaext does not exist."
+            exit 1
+          fi
+
+          ls -la cassiaext
+
+          echo
+          echo "============================================================"
+          echo "CMAKE FILES"
+          echo "============================================================"
+
+          find . \
+            -name "CMakeLists.txt" \
             -print \
             | sort
 
           echo
-          echo "========================================"
-          echo "Checking important dependencies"
-          echo "========================================"
+          echo "============================================================"
+          echo "CASSIAEXT DEPENDENCIES"
+          echo "============================================================"
 
-          for dir in \
-            libandroid-shmem \
-            xcbproto \
-            xorgproto \
-            libxau \
-            libxcb \
-            libx11 \
-            libffi \
-            libexpat \
-            wayland \
-            wayland-protocols \
-            libxfixes \
-            libxdamage \
-            libxcomposite \
-            libxrender \
-            libxcursor \
-            libxext \
-            libxxf86vm \
-            libxi \
-            libxtst \
-            libxres \
-            libxtrans \
-            libice \
-            libsm \
-            libxt \
-            libxmu
-          do
-            if [ -d "cassiaext/deps/$dir" ] && [ "$(find "cassiaext/deps/$dir" -mindepth 1 -maxdepth 1 | head -n 1)" ]; then
-              echo "OK: $dir"
-            else
-              echo "MISSING/EMPTY: $dir"
-            fi
-          done
+          if [ -d "cassiaext/deps" ]; then
+            find cassiaext/deps \
+              -maxdepth 1 \
+              -mindepth 1 \
+              -type d \
+              -print \
+              | sort
+          else
+            echo "WARNING: cassiaext/deps does not exist."
+          fi
 
           echo
-          echo "========================================"
-          echo "Gamescope"
-          echo "========================================"
+          echo "============================================================"
+          echo "GAMESCOPE"
+          echo "============================================================"
 
-          if [ -d "cassiaext/gamescope" ] && [ "$(find cassiaext/gamescope -mindepth 1 -maxdepth 1 | head -n 1)" ]; then
+          if [ -d "cassiaext/gamescope" ] && \
+             [ "$(find cassiaext/gamescope -mindepth 1 -maxdepth 1 | head -n 1)" ]; then
             echo "OK: gamescope"
           else
             echo "MISSING/EMPTY: gamescope"
           fi
 
           echo
-          echo "========================================"
-          echo "XServer"
-          echo "========================================"
+          echo "============================================================"
+          echo "XSERVER"
+          echo "============================================================"
 
-          if [ -d "cassiaext/xserver" ] && [ "$(find cassiaext/xserver -mindepth 1 -maxdepth 1 | head -n 1)" ]; then
+          if [ -d "cassiaext/xserver" ] && \
+             [ "$(find cassiaext/xserver -mindepth 1 -maxdepth 1 | head -n 1)" ]; then
             echo "OK: xserver"
           else
             echo "MISSING/EMPTY: xserver"
           fi
 
       # ============================================================
-      # 11. CONFIGURAR CMAKE
+      # 11. VERIFICAR TOOLCHAIN ANDROID
+      # ============================================================
+
+      - name: Verify Android toolchain
+        run: |
+          echo "ANDROID SDK:"
+          echo "$ANDROID_SDK_ROOT"
+
+          echo
+          echo "ANDROID NDK:"
+          echo "$ANDROID_NDK_HOME"
+
+          echo
+          echo "NDK toolchain:"
+          ls -la "$ANDROID_NDK_HOME/build/cmake/"
+
+          echo
+          echo "CMake:"
+          cmake --version
+
+          echo
+          echo "Ninja:"
+          ninja --version
+
+      # ============================================================
+      # 12. CONFIGURAR CASSIAEXT CON CMAKE
+      #
+      # IMPORTANTE:
+      #
+      # ANTES:
+      #   -H cassiaext
+      #
+      # AHORA:
+      #   -S cassiaext
+      #
+      # -S = source directory
+      # -B = build directory
       # ============================================================
 
       - name: Configure CassiaExt with CMake
         run: |
           cmake \
+            -S cassiaext \
+            -B build/cassiaext \
             -GNinja \
-            -B build \
-            -H cassiaext \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
@@ -254,22 +302,26 @@ jobs:
             -DANDROID_NDK="$ANDROID_NDK_HOME"
 
       # ============================================================
-      # 12. BUILD CASSIAEXT
+      # 13. BUILD CASSIAEXT
       # ============================================================
 
       - name: Build CassiaExt
         run: |
-          cmake --build build --parallel 2
+          cmake \
+            --build build/cassiaext \
+            --parallel 2
 
       # ============================================================
-      # 13. MOSTRAR RESULTADO CASSIAEXT
+      # 14. BUSCAR RESULTADOS DE CASSIAEXT
       # ============================================================
 
       - name: Locate CassiaExt output
         run: |
-          echo "Searching for CassiaExt artifacts..."
+          echo "============================================================"
+          echo "CASSIAEXT BUILD OUTPUT"
+          echo "============================================================"
 
-          find cassiaext build \
+          find cassiaext build/cassiaext \
             -type f \
             \( \
               -name "*.tar.gz" \
@@ -281,21 +333,24 @@ jobs:
             | sort
 
       # ============================================================
-      # 14. CREAR cassiaext.cfg
+      # 15. VERIFICAR cassiaext.cfg
       # ============================================================
 
-      - name: Create cassiaext.cfg
+      - name: Verify cassiaext.cfg
         run: |
-          if [ -f cassiaext.cfg ]; then
-            echo "cassiaext.cfg already exists."
-            cat cassiaext.cfg
-          else
+          if [ ! -f "cassiaext.cfg" ]; then
             echo "ERROR: cassiaext.cfg is missing."
+            echo
+            echo "Files in repository root:"
+            ls -la
             exit 1
           fi
 
+          echo "cassiaext.cfg found:"
+          cat cassiaext.cfg
+
       # ============================================================
-      # 15. GRADLE PERMISSIONS
+      # 16. PREPARAR GRADLE
       # ============================================================
 
       - name: Make Gradle executable
@@ -303,7 +358,17 @@ jobs:
           chmod +x ./gradlew
 
       # ============================================================
-      # 16. BUILD DEBUG APK
+      # 17. LIMPIAR BUILD ANTERIOR
+      # ============================================================
+
+      - name: Clean Gradle build
+        run: |
+          ./gradlew \
+            --no-daemon \
+            clean
+
+      # ============================================================
+      # 18. BUILD DEBUG APK
       # ============================================================
 
       - name: Build Debug APK
@@ -311,10 +376,11 @@ jobs:
           ./gradlew \
             --no-daemon \
             --stacktrace \
+            --info \
             assembleDebug
 
       # ============================================================
-      # 17. BUILD RELEASE APK
+      # 19. BUILD RELEASE APK
       # ============================================================
 
       - name: Build Release APK
@@ -322,17 +388,18 @@ jobs:
           ./gradlew \
             --no-daemon \
             --stacktrace \
+            --info \
             assembleRelease
 
       # ============================================================
-      # 18. LISTAR APKs
+      # 20. LOCALIZAR APKs
       # ============================================================
 
       - name: Locate APK files
         run: |
-          echo "========================================"
+          echo "============================================================"
           echo "APK OUTPUT"
-          echo "========================================"
+          echo "============================================================"
 
           find app/build/outputs/apk \
             -type f \
@@ -341,7 +408,7 @@ jobs:
             | sort
 
       # ============================================================
-      # 19. SUBIR APKs COMO ARTIFACTS
+      # 21. SUBIR DEBUG APK
       # ============================================================
 
       - name: Upload Debug APK
@@ -350,6 +417,10 @@ jobs:
           name: Cassia-debug-arm64
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      # ============================================================
+      # 22. SUBIR RELEASE APK
+      # ============================================================
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
